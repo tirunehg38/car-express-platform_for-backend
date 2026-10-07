@@ -8,12 +8,19 @@ const {
   requireBody,
   validateId,
 } = require("../middleware/validate.middleware");
+const { inquiryRateLimiter } = require("../middleware/rateLimit.middleware");
 
 const router = express.Router();
 
 router.get("/", authenticate, controller.list);
 router.get("/:id", authenticate, validateId(), controller.getById);
-router.post("/", optionalAuthenticate, requireBody, controller.create);
+router.post(
+  "/",
+  inquiryRateLimiter(),
+  optionalAuthenticate,
+  requireBody,
+  controller.create
+);
 router.patch("/:id/status", authenticate, validateId(), requireBody, controller.updateStatus);
 router.put("/:id/status", authenticate, validateId(), requireBody, controller.updateStatus);
 router.put("/:id", authenticate, validateId(), requireBody, controller.update);

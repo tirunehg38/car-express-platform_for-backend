@@ -16,6 +16,12 @@ const config = {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",
   },
+
+  email: {
+    resendApiKey: process.env.RESEND_API_KEY || "",
+    from: process.env.EMAIL_FROM || "Car Express <onboarding@resend.dev>",
+    frontendUrl: process.env.FRONTEND_URL || "http://localhost:5173",
+  },
 };
 
 module.exports = config;

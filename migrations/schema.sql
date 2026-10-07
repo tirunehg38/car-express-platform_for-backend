@@ -95,10 +95,15 @@ CREATE TABLE IF NOT EXISTS inquiries (
   type TEXT NOT NULL CHECK (type IN ('contact', 'financing')),
   name TEXT NOT NULL CHECK (length(btrim(name)) > 0),
   email TEXT NOT NULL CHECK (length(btrim(email)) > 0),
+  phone TEXT,
   message TEXT NOT NULL CHECK (length(btrim(message)) > 0),
   status TEXT NOT NULL DEFAULT 'new'
-    CHECK (status IN ('new', 'read', 'replied', 'closed')),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    CHECK (status IN ('new', 'contacted', 'read', 'replied', 'closed')),
+  email_sent BOOLEAN NOT NULL DEFAULT FALSE,
+  email_sent_at TIMESTAMPTZ,
+  email_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS reviews (

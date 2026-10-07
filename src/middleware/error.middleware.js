@@ -14,6 +14,7 @@ const errorMiddleware = (error, req, res, next) => {
     CONFLICT: 409,
     UPLOAD_FAILED: 502,
     CLOUDINARY_NOT_CONFIGURED: 503,
+    CLOUDINARY_UPLOAD_REJECTED: 502,
     IMAGE_SYNC_FAILED: 503,
   };
   if (serviceStatuses[error.code]) {

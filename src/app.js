@@ -12,9 +12,11 @@ const httpError = require("./utils/httpError");
 const cors = require("cors");
 const helmet = require("helmet");
 
+const path = require("path");
+
 const app = express();
 
-app.use(helmet());
+app.use(helmet({ crossOriginResourcePolicy: false }));
 
 app.use(
   cors({
@@ -25,6 +27,9 @@ app.use(
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+app.use("/uploads", express.static(path.resolve(__dirname, "../uploads")));
+app.use("/api/uploads", express.static(path.resolve(__dirname, "../uploads")));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);

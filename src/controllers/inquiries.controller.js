@@ -22,7 +22,7 @@ const create = async (req, res) => {
   const inquiry = await InquiriesService.create(req.body, req.user || null);
   return res.status(201).json({
     success: true,
-    message: "Inquiry submitted successfully",
+    message: "Your inquiry has been sent to the seller successfully.",
     data: inquiry,
   });
 };

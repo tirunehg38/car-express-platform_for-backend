@@ -1,10 +1,13 @@
 const Inquiry = require("../models/inquiry.model");
 const Car = require("../models/car.model");
+const User = require("../models/user.model");
+const EmailService = require("./email.service");
 const serviceError = require("../utils/serviceError");
 
 const validTypes = ["contact", "financing"];
-const validStatuses = ["new", "read", "replied", "closed"];
+const validStatuses = ["new", "contacted", "read", "replied", "closed"];
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const phonePattern = /^[+]?[\d\s\-().]{7,25}$/;
 
 const pagination = ({ page, limit }) => {
   const parsedPage = page === undefined ? 1 : Number(page);
@@ -52,42 +55,164 @@ const getById = async (id, actor) => {
 };
 
 const create = async (input, actor = null) => {
-  const allowed = ["type", "name", "email", "message", "car_id"];
+  const allowed = [
+    "type", "name", "email", "phone", "message", "car_id",
+    "buyerName", "buyerEmail", "buyerPhone", "carId",
+  ];
   if (Object.keys(input).some((field) => !allowed.includes(field))) {
     throw serviceError("VALIDATION_ERROR", "Request contains unsupported inquiry fields");
   }
-  const { type, name, email, message, car_id } = input;
+
+  const rawCarId = input.carId !== undefined ? input.carId : input.car_id;
+  const name = input.buyerName !== undefined ? input.buyerName : input.name;
+  const email = input.buyerEmail !== undefined ? input.buyerEmail : input.email;
+  const phone = input.buyerPhone !== undefined ? input.buyerPhone : input.phone;
+  const message = input.message;
+  const type = input.type || "contact";
+
   if (!validTypes.includes(type)) {
     throw serviceError("VALIDATION_ERROR", "type must be contact or financing");
   }
-  if (typeof name !== "string" || !name.trim()) {
-    throw serviceError("VALIDATION_ERROR", "A non-empty name is required");
+
+  // 1. Validate Buyer Name
+  if (name === undefined || name === null || typeof name !== "string" || !name.trim()) {
+    throw serviceError("VALIDATION_ERROR", "Buyer name is required");
   }
-  if (typeof email !== "string" || !emailPattern.test(email.trim())) {
-    throw serviceError("VALIDATION_ERROR", "A valid email is required");
+  const trimmedName = name.trim();
+  if (trimmedName.length > 100) {
+    throw serviceError("VALIDATION_ERROR", "Buyer name must be 100 characters or less");
   }
-  if (typeof message !== "string" || !message.trim()) {
+
+  // 2. Validate Buyer Email
+  if (email === undefined || email === null || typeof email !== "string" || !emailPattern.test(email.trim())) {
+    throw serviceError("VALIDATION_ERROR", "A valid email address is required");
+  }
+  const trimmedEmail = email.trim().toLowerCase();
+
+  // 3. Validate Buyer Phone
+  const isCarInquiry = rawCarId !== undefined && rawCarId !== null && rawCarId !== "";
+  if (isCarInquiry) {
+    if (phone === undefined || phone === null || typeof phone !== "string" || !phone.trim()) {
+      throw serviceError("VALIDATION_ERROR", "Buyer phone number is required");
+    }
+  }
+  let trimmedPhone = null;
+  if (phone !== undefined && phone !== null && typeof phone === "string" && phone.trim()) {
+    trimmedPhone = phone.trim();
+    if (!phonePattern.test(trimmedPhone)) {
+      throw serviceError("VALIDATION_ERROR", "Buyer phone number must be a valid format");
+    }
+  }
+
+  // 4. Validate Message
+  if (message === undefined || message === null || typeof message !== "string" || !message.trim()) {
     throw serviceError("VALIDATION_ERROR", "A non-empty message is required");
   }
-  if (
-    car_id !== undefined &&
-    car_id !== null &&
-    (!/^[1-9]\d*$/.test(String(car_id)) ||
-      BigInt(car_id) > 9223372036854775807n)
-  ) {
-    throw serviceError("VALIDATION_ERROR", "car_id must be a positive integer or null");
+  const trimmedMessage = message.trim();
+  if (trimmedMessage.length > 2000) {
+    throw serviceError("VALIDATION_ERROR", "Message must be 2000 characters or less");
   }
-  if (car_id !== undefined && car_id !== null && !(await Car.findExistingById(car_id))) {
-    throw serviceError("NOT_FOUND", "Car not found");
+
+  let car = null;
+  let seller = null;
+  let validatedCarId = null;
+
+  // 5. If car inquiry, verify car, seller, and seller email
+  if (isCarInquiry) {
+    if (
+      !/^[1-9]\d*$/.test(String(rawCarId)) ||
+      BigInt(rawCarId) > 9223372036854775807n
+    ) {
+      throw serviceError("VALIDATION_ERROR", "Invalid car ID");
+    }
+    validatedCarId = String(rawCarId);
+
+    car = await Car.findById(validatedCarId, true);
+    if (!car) {
+      throw serviceError("NOT_FOUND", "Car not found");
+    }
+
+    if (!car.owner_id) {
+      throw serviceError("VALIDATION_ERROR", "This car listing does not have an assigned seller");
+    }
+
+    seller = await User.findById(car.owner_id);
+    if (!seller) {
+      throw serviceError("NOT_FOUND", "The seller for this car could not be found");
+    }
+
+    if (!seller.email || !emailPattern.test(String(seller.email).trim())) {
+      throw serviceError("VALIDATION_ERROR", "The seller does not have a registered email address");
+    }
   }
-  return Inquiry.create({
+
+  // 6. Save inquiry in PostgreSQL (source of truth)
+  const savedInquiry = await Inquiry.create({
     user_id: actor?.id || null,
-    car_id: car_id ?? null,
+    car_id: validatedCarId,
     type,
-    name: name.trim(),
-    email: email.trim().toLowerCase(),
-    message: message.trim(),
+    name: trimmedName,
+    email: trimmedEmail,
+    phone: trimmedPhone,
+    message: trimmedMessage,
+    status: "new",
   });
+
+  // 7. Send notification email to seller via Resend safely
+  if (car && seller) {
+    try {
+      const emailResult = await EmailService.sendSellerInquiryNotification({
+        seller: {
+          id: seller.id,
+          name: seller.name,
+          email: seller.email,
+        },
+        buyer: {
+          name: trimmedName,
+          email: trimmedEmail,
+          phone: trimmedPhone,
+        },
+        car: {
+          id: car.id,
+          brand_name: car.brand_name || car.brand,
+          model: car.model,
+          year: car.year,
+          price: car.price,
+        },
+        inquiry: {
+          id: savedInquiry.id,
+          message: trimmedMessage,
+          created_at: savedInquiry.created_at,
+        },
+      });
+
+      if (emailResult.success) {
+        await Inquiry.updateEmailDelivery(savedInquiry.id, {
+          email_sent: true,
+          email_sent_at: new Date(),
+          email_error: null,
+        });
+        savedInquiry.email_sent = true;
+      } else {
+        await Inquiry.updateEmailDelivery(savedInquiry.id, {
+          email_sent: false,
+          email_error: emailResult.error || "Email delivery failed",
+        });
+        savedInquiry.email_sent = false;
+        savedInquiry.email_error = emailResult.error;
+      }
+    } catch (emailError) {
+      console.error("[InquiriesService] Email notification error:", emailError.message);
+      await Inquiry.updateEmailDelivery(savedInquiry.id, {
+        email_sent: false,
+        email_error: emailError.message || "Failed to deliver email",
+      }).catch(() => {});
+      savedInquiry.email_sent = false;
+      savedInquiry.email_error = emailError.message;
+    }
+  }
+
+  return savedInquiry;
 };
 
 const update = async (id, input, actor) => {
@@ -106,8 +231,8 @@ const update = async (id, input, actor) => {
   }
 
   const allowed = (isAdmin || isSeller)
-    ? ["name", "email", "message", "status"]
-    : ["name", "email", "message"];
+    ? ["name", "email", "phone", "message", "status"]
+    : ["name", "email", "phone", "message"];
 
   const supplied = Object.keys(input);
   if (!supplied.length) throw serviceError("VALIDATION_ERROR", "At least one field is required");
@@ -128,6 +253,18 @@ const update = async (id, input, actor) => {
         throw serviceError("VALIDATION_ERROR", "Email must be valid");
       }
       fields.email = value.trim().toLowerCase();
+    } else if (field === "phone") {
+      if (value !== null && typeof value !== "string") {
+        throw serviceError("VALIDATION_ERROR", "Phone must be a string or null");
+      }
+      if (typeof value === "string" && value.trim()) {
+        if (!phonePattern.test(value.trim())) {
+          throw serviceError("VALIDATION_ERROR", "Phone must be a valid format");
+        }
+        fields.phone = value.trim();
+      } else {
+        fields.phone = null;
+      }
     } else if (field === "status") {
       if (!validStatuses.includes(value)) {
         throw serviceError("VALIDATION_ERROR", `status must be one of: ${validStatuses.join(", ")}`);

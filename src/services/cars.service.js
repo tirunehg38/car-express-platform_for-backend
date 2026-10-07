@@ -1,6 +1,6 @@
 const Car = require("../models/car.model");
 const CarImage = require("../models/car-image.model");
-const CloudinaryService = require("./cloudinary.service");
+const StorageService = require("./storage.service");
 const serviceError = require("../utils/serviceError");
 
 const requiredText = ["model", "city", "area", "description"];
@@ -20,18 +20,8 @@ const isPositiveId = (value) =>
   /^[1-9]\d*$/.test(String(value ?? "")) &&
   BigInt(value) <= 9223372036854775807n;
 
-const cleanupCloudinaryImages = async (images) => {
-  const results = await Promise.allSettled(
-    images.map((image) => CloudinaryService.deleteImage(image.public_id))
-  );
-  results.forEach((result, index) => {
-    if (result.status === "rejected") {
-      console.error("Failed to clean up a Cloudinary car image", {
-        publicId: images[index].public_id,
-        error: result.reason?.message,
-      });
-    }
-  });
+const cleanupStorageImages = async (images) => {
+  await StorageService.cleanupImages(images);
 };
 
 const assertCarAccess = async (id, actor) => {
@@ -91,17 +81,17 @@ const uploadImages = async (id, files, actor, options = {}) => {
   const uploaded = [];
   try {
     for (const file of files) {
-      uploaded.push(await CloudinaryService.uploadImage(file.buffer));
+      uploaded.push(await StorageService.uploadImage(file));
     }
     return await CarImage.createCarImages(id, uploaded, { primaryIndex, primaryImageId });
   } catch (error) {
-    await cleanupCloudinaryImages(uploaded);
-    if (error.code === "CLOUDINARY_NOT_CONFIGURED") throw error;
+    await cleanupStorageImages(uploaded);
     if (uploaded.length !== files.length) {
-      console.error("Cloudinary car image upload failed:", error.message);
-      const message = error.message
-        ? `Car image upload failed: ${error.message}`
-        : "Car image upload failed";
+      console.error("Car image upload failed", {
+        errorCode: error.code ?? "UNKNOWN",
+        httpStatus: error.http_code ?? error.status ?? null,
+      });
+      const message = error.message || "Car image upload failed; verify storage configuration";
       const uploadError = serviceError("UPLOAD_FAILED", message);
       uploadError.status = 502;
       throw uploadError;
@@ -127,7 +117,7 @@ const deleteImage = async (carId, imageId, actor) => {
   if (!image) throw serviceError("NOT_FOUND", "Car image not found");
   if (image.public_id) {
     try {
-      await CloudinaryService.deleteImage(image.public_id);
+      await StorageService.deleteImage(image.public_id);
     } catch (error) {
       const deleteError = serviceError("UPLOAD_FAILED", "Image could not be deleted from storage");
       deleteError.status = 502;
@@ -394,7 +384,7 @@ const remove = async (id, actor) => {
   for (const image of images) {
     if (image.public_id) {
       try {
-        await CloudinaryService.deleteImage(image.public_id);
+        await StorageService.deleteImage(image.public_id);
       } catch (error) {
         const deleteError = serviceError(
           "UPLOAD_FAILED",

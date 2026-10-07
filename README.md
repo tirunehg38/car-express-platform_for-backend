@@ -17,7 +17,7 @@ used by the API are:
 | `cars` | `id`, `owner_id`, `brand_id`, `model`, `year`, `price`, `mileage`, `vehicle_condition`, `fuel_type`, `transmission`, `body_type`, `engine_size`, `color`, `city`, `area`, `description`, `features`, `status`, `created_at`, `updated_at` |
 | `car_images` | `id`, `car_id`, `image_url`, `public_id`, `is_primary`, `sort_order`, `created_at` |
 | `favorites` | `user_id`, `car_id`, `created_at` |
-| `inquiries` | `id`, `user_id`, `car_id`, `type`, `name`, `email`, `message`, `status`, `created_at` |
+| `inquiries` | `id`, `user_id`, `car_id`, `type`, `name`, `email`, `phone`, `message`, `status`, `email_sent`, `email_sent_at`, `email_error`, `created_at`, `updated_at` |
 | `reviews` | `id`, `user_id`, `car_id`, `rating`, `title`, `body`, `created_at`, `updated_at` |
 
 Relevant database-enforced values are `users.role` (`buyer`, `seller`,
@@ -25,7 +25,7 @@ Relevant database-enforced values are `users.role` (`buyer`, `seller`,
 `cars.fuel_type` (`petrol`, `diesel`, `hybrid`, `electric`),
 `cars.transmission` (`manual`, `automatic`, `cvt`), `cars.status`
 (`pending`, `approved`, `rejected`, `sold`), `inquiries.type` (`contact`,
-`financing`), and `inquiries.status` (`new`, `read`, `replied`, `closed`).
+`financing`), and `inquiries.status` (`new`, `contacted`, `read`, `replied`, `closed`).
 Emails, non-null phones, and `(favorites.user_id, favorites.car_id)` are
 unique. Each car can have up to 10 image records and at most one primary image.
 `public_id` stores Cloudinary metadata; image bytes are never stored in
@@ -66,6 +66,91 @@ Only the backend reads these credentials. Never add the Cloudinary API secret
 to a frontend environment file or expose it through a `VITE_` variable.
 Uploads use in-memory Multer storage and are limited to 10 images per request
 and 10 MB per image.
+
+## Resend email configuration & notifications (Step 5)
+
+Car Express Ethiopia uses [Resend](https://resend.com) for transactional lead delivery emails to sellers when buyers submit vehicle inquiries.
+
+### 1. How to create a Resend account
+1. Navigate to [resend.com](https://resend.com) and sign up for a free account.
+2. Complete email verification to activate your account.
+
+### 2. How to create the API key
+1. In the Resend dashboard, open the **API Keys** tab (`https://resend.com/api-keys`).
+2. Click **Create API Key**.
+3. Set the name (e.g. `car-express-ethiopia`), choose permission `Full access`, and click **Add**.
+4. Copy the generated key starting with `re_` immediately.
+
+### 3. How to verify the sending domain / email
+- **Development & Testing:** Resend provides a sandbox domain (`onboarding@resend.dev`) out-of-the-box. It can send test notifications directly to the email address registered with your Resend account without requiring custom DNS configuration.
+- **Production Deployment:**
+  1. Go to **Domains** in the Resend dashboard (`https://resend.com/domains`) and click **Add Domain**.
+  2. Enter your custom domain (e.g., `carexpress.et`).
+  3. Resend will provide DNS records (DKIM, SPF TXT records, and MX records). Add these records in your DNS provider (Cloudflare, Namecheap, Route 53, etc.).
+  4. Once verified, configure `EMAIL_FROM` with your verified domain (e.g. `Car Express Ethiopia <notifications@carexpress.et>`).
+
+### 4. Where to put the credentials
+Add these variables to `backend/.env` (which is git-ignored and never committed):
+
+```dotenv
+RESEND_API_KEY=re_your_api_key_here
+EMAIL_FROM=Car Express <onboarding@resend.dev>
+FRONTEND_URL=http://localhost:5173
+```
+
+> **Security rule:** Never place `RESEND_API_KEY` in frontend `.env` files or prefix it with `VITE_`. Email sending and API keys must remain strictly server-side.
+
+### 5. How to test the inquiry email
+- **Automated test suite:**
+  ```sh
+  cd backend
+  npm test
+  ```
+  Runs all 13 test scenarios including validation, email resilience, rate limiting, and database persistence.
+- **Manual API test via curl:**
+  ```sh
+  curl -X POST http://localhost:5000/api/inquiries \
+    -H "Content-Type: application/json" \
+    -d '{
+      "carId": 1,
+      "buyerName": "Abebe Kebede",
+      "buyerEmail": "abebe@example.com",
+      "buyerPhone": "0911223344",
+      "message": "Hello, is this car still available? I would like to schedule a viewing."
+    }'
+  ```
+- **In-browser test:**
+  Navigate to any car details page at `http://localhost:5173/inventory/:id`, fill out the "Contact Seller / Send Inquiry" form, and click **Send Inquiry**.
+
+### 6. Buyer → Backend → Database → Seller email flow
+```
+[Buyer on CarDetails.jsx]
+       │
+       ▼ (POST /api/inquiries with buyerName, buyerEmail, buyerPhone, message, carId)
+[inquiryRateLimiter Middleware] (Prevents rapid duplicate inquiries & spam flood)
+       │
+       ▼
+[inquiries.controller.js]
+       │
+       ▼
+[inquiries.service.js]
+       ├─► 1. Validates buyer data (name, email format, phone format, message length <= 2000)
+       ├─► 2. Resolves Car & Owner in PostgreSQL (ensures car exists, fetches seller email)
+       │      * Security: Seller email is strictly derived from DB (car -> owner -> email),
+       │                  never trusted from client input.
+       ├─► 3. Saves inquiry into PostgreSQL (status: 'new', email_sent: false)
+       │      * PostgreSQL is the authoritative source of truth.
+       ├─► 4. Dispatches HTML lead email via EmailService (Resend API)
+       │      * Reply-To set to buyer.email for 1-click seller response
+       │      * Includes vehicle specs, price in ETB, reference ID, and CTA link
+       ├─► 5. Updates inquiry email delivery status (email_sent: true, email_sent_at)
+       │      * If email fails, error is recorded in email_error without rolling back the DB
+       ▼
+[Response 201 Created] -> "Your inquiry has been sent to the seller successfully."
+       │
+       ▼
+[Frontend CarDetails.jsx] Displays success banner & allows sending another message
+```
 
 ## Endpoint access
 
