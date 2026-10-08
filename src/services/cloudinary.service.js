@@ -1,5 +1,29 @@
+const https = require("https");
 const cloudinary = require("../config/cloudinary");
 const serviceError = require("../utils/serviceError");
+
+// Intercept https.request to capture full error bodies (especially 403) from Cloudinary
+let lastCloudinaryErrorBody = "";
+const origHttpsRequest = https.request;
+
+https.request = function (...args) {
+  const req = origHttpsRequest.apply(this, args);
+  req.on("response", (res) => {
+    if (res.statusCode >= 400) {
+      let body = "";
+      res.on("data", (chunk) => {
+        body += chunk;
+      });
+      res.on("end", () => {
+        if (body) {
+          lastCloudinaryErrorBody = body;
+          console.error(`[CLOUDINARY HTTP ${res.statusCode} ERROR BODY]:`, body);
+        }
+      });
+    }
+  });
+  return req;
+};
 
 const isPlaceholder = (value) => {
   let decoded = String(value ?? "").trim();
@@ -35,20 +59,34 @@ const assertConfigured = () => {
 
 const uploadImage = (buffer) => {
   assertConfigured();
+  lastCloudinaryErrorBody = "";
   return new Promise((resolve, reject) => {
     const stream = cloudinary.uploader.upload_stream(
       { folder: "car-express/cars", resource_type: "image" },
       (error, result) => {
         if (error) {
           console.error("Cloudinary upload_stream error details:", error);
+          let parsedBodyMsg = "";
+          if (lastCloudinaryErrorBody) {
+            try {
+              const parsed = JSON.parse(lastCloudinaryErrorBody);
+              parsedBodyMsg = parsed?.error?.message || lastCloudinaryErrorBody;
+            } catch {
+              parsedBodyMsg = lastCloudinaryErrorBody;
+            }
+          }
+
           const rawMsg =
+            parsedBodyMsg ||
             error?.message ||
             error?.error?.message ||
             (typeof error === "string" ? error : "") ||
             JSON.stringify(error);
 
           let message = `Cloudinary upload failed: ${rawMsg}`;
-          if (/permission|forbidden|action|not permitted|create/i.test(rawMsg)) {
+          if (error?.http_code === 403 || String(rawMsg).includes("403")) {
+            message = `Cloudinary rejected request with 403 Forbidden (${rawMsg}). Common causes: 1) The API Key lacks 'Upload' permission (in Cloudinary Console -> Settings -> Access Keys, ensure 'Upload' is enabled or use the Master API Key); 2) The CLOUDINARY_API_SECRET in Render does not match this API Key; 3) The Cloudinary account email is unverified.`;
+          } else if (/permission|forbidden|action|not permitted|create/i.test(rawMsg)) {
             message = `Cloudinary permission denied (${rawMsg}): The API key is missing 'create' (upload) permission. In Cloudinary Console -> Settings -> Access Keys, grant 'Upload' permission to this Access Key or use the Master API key.`;
           } else if (/invalid|unauthorized|authentication|signature|api[_\s-]?key|secret|credentials/i.test(rawMsg)) {
             message = `Cloudinary authentication failed (${rawMsg}): Please check CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your Render environment variables.`;
