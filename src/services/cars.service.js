@@ -92,8 +92,8 @@ const uploadImages = async (id, files, actor, options = {}) => {
         httpStatus: error.http_code ?? error.status ?? null,
       });
       const message = error.message || "Car image upload failed; verify storage configuration";
-      const uploadError = serviceError("UPLOAD_FAILED", message);
-      uploadError.status = 502;
+      const uploadError = serviceError(error.code || "UPLOAD_FAILED", message);
+      uploadError.status = error.status || 502;
       throw uploadError;
     }
     throw error;

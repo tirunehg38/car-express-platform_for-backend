@@ -26,7 +26,7 @@ const assertConfigured = () => {
   if (!isConfigured()) {
     const error = serviceError(
       "CLOUDINARY_NOT_CONFIGURED",
-      "Set valid Cloudinary cloud name, API key, and API secret in backend/.env, then restart the backend"
+      "Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET (or CLOUDINARY_URL) in your environment variables (Render Dashboard / .env)."
     );
     error.status = 503;
     throw error;
@@ -45,7 +45,7 @@ const uploadImage = (buffer) => {
           if (/permission|forbidden|action|create/i.test(rawMsg)) {
             message = "Cloudinary rejected upload: The API key is missing 'create' (upload) permission. Grant 'create' permission to this Access Key in the Cloudinary Console or use the Master API key.";
           } else if (/invalid api_key|unauthorized|authentication/i.test(rawMsg)) {
-            message = "Cloudinary rejected the configured credentials; verify the API key and secret in backend/.env";
+            message = "Cloudinary rejected the configured credentials; verify CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your environment variables (Render Dashboard / .env)";
           }
           const uploadError = serviceError("CLOUDINARY_UPLOAD_REJECTED", message);
           uploadError.status = 502;

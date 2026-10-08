@@ -18,6 +18,13 @@ const config = {
         : false,
   },
 
+  cloudinary: {
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME || "",
+    apiKey: process.env.CLOUDINARY_API_KEY || "",
+    apiSecret: process.env.CLOUDINARY_API_SECRET || "",
+    url: process.env.CLOUDINARY_URL || "",
+  },
+
   jwt: {
     secret: process.env.JWT_SECRET,
     expiresIn: process.env.JWT_EXPIRES_IN || "7d",

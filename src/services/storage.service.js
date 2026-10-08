@@ -39,18 +39,12 @@ const saveLocalImage = async (file) => {
   };
 };
 
+/**
+ * Upload an image directly to Cloudinary.
+ * Does not fall back to ephemeral local disk so uploaded car images are preserved.
+ */
 const uploadImage = async (file) => {
-  if (CloudinaryService.isConfigured()) {
-    try {
-      return await CloudinaryService.uploadImage(file.buffer);
-    } catch (error) {
-      console.warn(
-        `Cloudinary upload failed (${error.message}). Falling back to local storage.`
-      );
-    }
-  }
-
-  return await saveLocalImage(file);
+  return await CloudinaryService.uploadImage(file.buffer);
 };
 
 const deleteImage = async (publicId) => {

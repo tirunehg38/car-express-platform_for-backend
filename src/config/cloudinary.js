@@ -1,4 +1,4 @@
-require("./config");
+const config = require("./config");
 const cloudinary = require("cloudinary").v2;
 
 const sanitize = (value) => {
@@ -6,22 +6,24 @@ const sanitize = (value) => {
   return String(value).trim().replace(/^[<@]+|[>]+$/g, "");
 };
 
-if (process.env.CLOUDINARY_URL) {
-  process.env.CLOUDINARY_URL = process.env.CLOUDINARY_URL.replace(/<|>/g, "").trim();
-}
+// Always enforce secure (HTTPS) URLs
+cloudinary.config({ secure: true });
 
-cloudinary.config();
+const cloudName = sanitize(config.cloudinary?.cloudName || process.env.CLOUDINARY_CLOUD_NAME);
+const apiKey = sanitize(config.cloudinary?.apiKey || process.env.CLOUDINARY_API_KEY);
+const apiSecret = sanitize(config.cloudinary?.apiSecret || process.env.CLOUDINARY_API_SECRET);
+const cloudinaryUrl = (config.cloudinary?.url || process.env.CLOUDINARY_URL || "").replace(/<|>/g, "").trim();
 
-const explicitCredentials = Object.fromEntries(
-  [
-    ["cloud_name", sanitize(process.env.CLOUDINARY_CLOUD_NAME)],
-    ["api_key", sanitize(process.env.CLOUDINARY_API_KEY)],
-    ["api_secret", sanitize(process.env.CLOUDINARY_API_SECRET)],
-  ].filter(([, value]) => Boolean(value))
-);
-
-if (Object.keys(explicitCredentials).length) {
-  cloudinary.config(explicitCredentials);
+if (cloudName && apiKey && apiSecret) {
+  cloudinary.config({
+    cloud_name: cloudName,
+    api_key: apiKey,
+    api_secret: apiSecret,
+    secure: true,
+  });
+} else if (cloudinaryUrl) {
+  process.env.CLOUDINARY_URL = cloudinaryUrl;
+  cloudinary.config({ secure: true });
 }
 
 module.exports = cloudinary;
