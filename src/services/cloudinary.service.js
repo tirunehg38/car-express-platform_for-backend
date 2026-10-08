@@ -40,15 +40,24 @@ const uploadImage = (buffer) => {
       { folder: "car-express/cars", resource_type: "image" },
       (error, result) => {
         if (error) {
-          const rawMsg = error.message || "";
-          let message = "Cloudinary could not store the image; verify the Cloudinary account and network connection";
-          if (/permission|forbidden|action|create/i.test(rawMsg)) {
-            message = "Cloudinary rejected upload: The API key is missing 'create' (upload) permission. Grant 'create' permission to this Access Key in the Cloudinary Console or use the Master API key.";
-          } else if (/invalid api_key|unauthorized|authentication/i.test(rawMsg)) {
-            message = "Cloudinary rejected the configured credentials; verify CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your environment variables (Render Dashboard / .env)";
+          console.error("Cloudinary upload_stream error details:", error);
+          const rawMsg =
+            error?.message ||
+            error?.error?.message ||
+            (typeof error === "string" ? error : "") ||
+            JSON.stringify(error);
+
+          let message = `Cloudinary upload failed: ${rawMsg}`;
+          if (/permission|forbidden|action|not permitted|create/i.test(rawMsg)) {
+            message = `Cloudinary permission denied (${rawMsg}): The API key is missing 'create' (upload) permission. In Cloudinary Console -> Settings -> Access Keys, grant 'Upload' permission to this Access Key or use the Master API key.`;
+          } else if (/invalid|unauthorized|authentication|signature|api[_\s-]?key|secret|credentials/i.test(rawMsg)) {
+            message = `Cloudinary authentication failed (${rawMsg}): Please check CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in your Render environment variables.`;
+          } else if (/econnrefused|etimedout|enotfound|network|timeout/i.test(rawMsg)) {
+            message = `Cloudinary network error (${rawMsg}): Could not reach Cloudinary. Check network connection or outbound access.`;
           }
+
           const uploadError = serviceError("CLOUDINARY_UPLOAD_REJECTED", message);
-          uploadError.status = 502;
+          uploadError.status = error?.http_code || error?.error?.http_code || 502;
           return reject(uploadError);
         }
         if (!result?.secure_url || !result?.public_id) {
